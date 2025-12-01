@@ -1,4 +1,3 @@
-# ATM-AZURE
 
 <img width="1631" height="941" alt="ATM drawio (2)" src="https://github.com/user-attachments/assets/8710a3fe-36d8-43ba-8066-397bc3ddd594" />
 
@@ -52,5 +51,5 @@ All resources are grouped under a single Azure Resource Group (`bank-atm-rg`) an
 All resources are deployed under:
 
 ```bash
-Resource Group: bank-atm-rg
+Resource Group: atm-rg
 Location: East US

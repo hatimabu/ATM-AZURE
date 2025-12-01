@@ -1,0 +1,255 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "ATM Network Template",
+      "version": "1.0.0"
+    }
+  },
+  "parameters": {
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "Location for all network resources."
+      }
+    },
+    "environmentName": {
+      "type": "string",
+      "defaultValue": "dev",
+      "allowedValues": [
+        "dev",
+        "test",
+        "prod"
+      ],
+      "metadata": {
+        "description": "Environment name for resource naming"
+      }
+    }
+  },
+  "variables": {
+    "location": "[parameters('location')]",
+    "environmentName": "[parameters('environmentName')]",
+    "uniqueSuffix": "[substring(uniqueString(resourceGroup().id), 0, 6)]",
+    "vnetName": "[concat('atm-vnet-', variables('environmentName'), '-', variables('uniqueSuffix'))]",
+    "vnetAddressPrefix": "10.0.0.0/16",
+    "frontendSubnetName": "frontend",
+    "frontendSubnetPrefix": "10.0.1.0/24",
+    "frontendNsgName": "[concat(variables('vnetName'), '-frontend-nsg')]",
+    "backendSubnetName": "backend",
+    "backendSubnetPrefix": "10.0.2.0/24",
+    "backendNsgName": "[concat(variables('vnetName'), '-backend-nsg')]",
+    "tags": {
+      "Project": "ATM-Azure",
+      "Environment": "[variables('environmentName')]",
+      "Component": "Network",
+      "ManagedBy": "ARM Template"
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Network/virtualNetworks",
+      "apiVersion": "2023-04-01",
+      "name": "[variables('vnetName')]",
+      "location": "[variables('location')]",
+      "tags": "[variables('tags')]",
+      "properties": {
+        "addressSpace": {
+          "addressPrefixes": [
+            "[variables('vnetAddressPrefix')]"
+          ]
+        },
+        "subnets": [
+          {
+            "name": "[variables('frontendSubnetName')]",
+            "properties": {
+              "addressPrefix": "[variables('frontendSubnetPrefix')]",
+              "networkSecurityGroup": {
+                "id": "[resourceId('Microsoft.Network/networkSecurityGroups', variables('frontendNsgName'))]"
+              },
+              "serviceEndpoints": [
+                {
+                  "service": "Microsoft.Web"
+                },
+                {
+                  "service": "Microsoft.KeyVault"
+                }
+              ]
+            }
+          },
+          {
+            "name": "[variables('backendSubnetName')]",
+            "properties": {
+              "addressPrefix": "[variables('backendSubnetPrefix')]",
+              "networkSecurityGroup": {
+                "id": "[resourceId('Microsoft.Network/networkSecurityGroups', variables('backendNsgName'))]"
+              },
+              "serviceEndpoints": [
+                {
+                  "service": "Microsoft.Web"
+                },
+                {
+                  "service": "Microsoft.Sql"
+                },
+                {
+                  "service": "Microsoft.KeyVault"
+                },
+                {
+                  "service": "Microsoft.Storage"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Network/networkSecurityGroups",
+      "apiVersion": "2023-04-01",
+      "name": "[variables('frontendNsgName')]",
+      "location": "[variables('location')]",
+      "tags": "[variables('tags')]",
+      "properties": {
+        "securityRules": [
+          {
+            "name": "AllowHTTPS",
+            "properties": {
+              "protocol": "Tcp",
+              "sourcePortRange": "*",
+              "destinationPortRange": "443",
+              "sourceAddressPrefix": "Internet",
+              "destinationAddressPrefix": "*",
+              "access": "Allow",
+              "priority": 100,
+              "direction": "Inbound"
+            }
+          },
+          {
+            "name": "AllowHTTP",
+            "properties": {
+              "protocol": "Tcp",
+              "sourcePortRange": "*",
+              "destinationPortRange": "80",
+              "sourceAddressPrefix": "Internet",
+              "destinationAddressPrefix": "*",
+              "access": "Allow",
+              "priority": 110,
+              "direction": "Inbound"
+            }
+          },
+          {
+            "name": "DenyAllInbound",
+            "properties": {
+              "protocol": "*",
+              "sourcePortRange": "*",
+              "destinationPortRange": "*",
+              "sourceAddressPrefix": "*",
+              "destinationAddressPrefix": "*",
+              "access": "Deny",
+              "priority": 4096,
+              "direction": "Inbound"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Network/networkSecurityGroups",
+      "apiVersion": "2023-04-01",
+      "name": "[variables('backendNsgName')]",
+      "location": "[variables('location')]",
+      "tags": "[variables('tags')]",
+      "properties": {
+        "securityRules": [
+          {
+            "name": "AllowAppServiceInbound",
+            "properties": {
+              "protocol": "*",
+              "sourcePortRange": "*",
+              "destinationPortRange": "*",
+              "sourceAddressPrefix": "AppService",
+              "destinationAddressPrefix": "*",
+              "access": "Allow",
+              "priority": 100,
+              "direction": "Inbound"
+            }
+          },
+          {
+            "name": "AllowFrontendToBackend",
+            "properties": {
+              "protocol": "Tcp",
+              "sourcePortRange": "*",
+              "destinationPortRange": "80-443",
+              "sourceAddressPrefix": "[variables('frontendSubnetPrefix')]",
+              "destinationAddressPrefix": "*",
+              "access": "Allow",
+              "priority": 110,
+              "direction": "Inbound"
+            }
+          },
+          {
+            "name": "AllowSQL",
+            "properties": {
+              "protocol": "Tcp",
+              "sourcePortRange": "*",
+              "destinationPortRange": "1433",
+              "sourceAddressPrefix": "VirtualNetwork",
+              "destinationAddressPrefix": "*",
+              "access": "Allow",
+              "priority": 120,
+              "direction": "Outbound"
+            }
+          },
+          {
+            "name": "DenyAllInbound",
+            "properties": {
+              "protocol": "*",
+              "sourcePortRange": "*",
+              "destinationPortRange": "*",
+              "sourceAddressPrefix": "*",
+              "destinationAddressPrefix": "*",
+              "access": "Deny",
+              "priority": 4096,
+              "direction": "Inbound"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "outputs": {
+    "vnetName": {
+      "type": "string",
+      "value": "[variables('vnetName')]"
+    },
+    "vnetAddressSpace": {
+      "type": "string",
+      "value": "[variables('vnetAddressPrefix')]"
+    },
+    "frontendSubnetName": {
+      "type": "string",
+      "value": "[variables('frontendSubnetName')]"
+    },
+    "frontendSubnetPrefix": {
+      "type": "string",
+      "value": "[variables('frontendSubnetPrefix')]"
+    },
+    "backendSubnetName": {
+      "type": "string",
+      "value": "[variables('backendSubnetName')]"
+    },
+    "backendSubnetPrefix": {
+      "type": "string",
+      "value": "[variables('backendSubnetPrefix')]"
+    },
+    "frontendNsgName": {
+      "type": "string",
+      "value": "[variables('frontendNsgName')]"
+    },
+    "backendNsgName": {
+      "type": "string",
+      "value": "[variables('backendNsgName')]"
+    }
+  }
+}

@@ -46,10 +46,18 @@ All resources are grouped under a single Azure Resource Group (`bank-atm-rg`) an
 
 ---
 
-## 📦 Resource Group
+## 📦 Infrastructure
 
+### Resource Group
 All resources are deployed under:
-
 ```bash
 Resource Group: atm-rg
 Location: East US
+```
+
+### Network Architecture
+- **Virtual Network**: `atm-vnet-dev-{suffix}` (10.0.0.0/16)
+- **Frontend Subnet**: `frontend` (10.0.1.0/24) - Web applications
+- **Backend Subnet**: `backend` (10.0.2.0/24) - APIs and databases
+- **Security**: NSGs with granular access control
+- **Service Endpoints**: Secure Azure service integration

@@ -1,0 +1,196 @@
+name: Deploy ATM Network Infrastructure
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'infrastructure/templates/network.json'
+      - 'infrastructure/templates/network.parameters.json'
+      - '.github/workflows/deploy-network.yml'
+  pull_request:
+    branches: [ main, master ]
+    paths:
+      - 'infrastructure/templates/network.json'
+      - 'infrastructure/templates/network.parameters.json'
+      - '.github/workflows/deploy-network.yml'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - test
+          - prod
+
+jobs:
+  validate-secrets:
+    name: Validate Azure Secrets
+    runs-on: ubuntu-latest
+    outputs:
+      secrets-valid: ${{ steps.check-secrets.outputs.valid }}
+    env:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+    steps:
+    - name: Check Azure Secrets
+      id: check-secrets
+      run: |
+        if [ -z "$AZURE_CLIENT_ID" ] || [ -z "$AZURE_CLIENT_SECRET" ] || [ -z "$AZURE_SUBSCRIPTION_ID" ] || [ -z "$AZURE_TENANT_ID" ]; then
+          echo "valid=false" >> $GITHUB_OUTPUT
+          echo "❌ Azure secrets are not configured in repository settings" >&2
+          exit 1
+        else
+          echo "valid=true" >> $GITHUB_OUTPUT
+          echo "✅ Azure secrets are configured"
+        fi
+
+  validate-network:
+    name: Validate Network Template
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'dev' }}
+    needs: validate-secrets
+    if: needs.validate-secrets.outputs.secrets-valid == 'true'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Login to Azure
+      uses: azure/login@v2
+      with:
+        creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
+
+    - name: Validate Network ARM template
+      run: |
+        echo "Validating network ARM template..."
+        az deployment group validate \
+          --resource-group atm-rg \
+          --template-file infrastructure/templates/network.json \
+          --parameters infrastructure/templates/network.parameters.json \
+          --parameters environmentName=${{ github.event.inputs.environment || 'dev' }} \
+          --parameters location="East US"
+
+  deploy-network:
+    name: Deploy Network Infrastructure
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'dev' }}
+    needs: [validate-secrets, validate-network]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Login to Azure
+      uses: azure/login@v2
+      with:
+        creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
+
+    - name: Deploy Network Infrastructure
+      run: |
+        echo "Deploying network infrastructure..."
+        az deployment group create \
+          --resource-group atm-rg \
+          --template-file infrastructure/templates/network.json \
+          --parameters infrastructure/templates/network.parameters.json \
+          --parameters environmentName=${{ github.event.inputs.environment || 'dev' }} \
+          --parameters location="East US" \
+          --output json > network-deployment-output.json
+
+    - name: Save deployment outputs
+      run: |
+        echo "## 🌐 Network Infrastructure Deployment Outputs" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+        echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+
+        # Extract and display key outputs
+        VNET_NAME=$(cat network-deployment-output.json | jq -r '.properties.outputs.vnetName.value')
+        FRONTEND_SUBNET=$(cat network-deployment-output.json | jq -r '.properties.outputs.frontendSubnetName.value')
+        BACKEND_SUBNET=$(cat network-deployment-output.json | jq -r '.properties.outputs.backendSubnetName.value')
+
+        echo "| Virtual Network | $VNET_NAME |" >> $GITHUB_STEP_SUMMARY
+        echo "| Frontend Subnet | $FRONTEND_SUBNET |" >> $GITHUB_STEP_SUMMARY
+        echo "| Backend Subnet | $BACKEND_SUBNET |" >> $GITHUB_STEP_SUMMARY
+        echo "| Address Space | 10.0.0.0/16 |" >> $GITHUB_STEP_SUMMARY
+
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 📋 Complete Output" >> $GITHUB_STEP_SUMMARY
+        echo "\`\`\`json" >> $GITHUB_STEP_SUMMARY
+        cat network-deployment-output.json | jq '.properties.outputs' >> $GITHUB_STEP_SUMMARY
+        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+
+    - name: Upload deployment artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: network-deployment-outputs-${{ github.event.inputs.environment || 'dev' }}
+        path: network-deployment-output.json
+
+    - name: Verify Network Resources
+      run: |
+        echo "Verifying deployed network resources..."
+
+        # Get deployment outputs
+        VNET_NAME=$(cat network-deployment-output.json | jq -r '.properties.outputs.vnetName.value')
+        FRONTEND_NSG=$(cat network-deployment-output.json | jq -r '.properties.outputs.frontendNsgName.value')
+        BACKEND_NSG=$(cat network-deployment-output.json | jq -r '.properties.outputs.backendNsgName.value')
+
+        # Check VNet
+        echo "Checking Virtual Network: $VNET_NAME"
+        az network vnet show --resource-group atm-rg --name $VNET_NAME --output table
+
+        # Check NSGs
+        echo "Checking Frontend NSG: $FRONTEND_NSG"
+        az network nsg show --resource-group atm-rg --name $FRONTEND_NSG --output table
+
+        echo "Checking Backend NSG: $BACKEND_NSG"
+        az network nsg show --resource-group atm-rg --name $BACKEND_NSG --output table
+
+        echo "✅ Network infrastructure verification completed"
+
+  network-summary:
+    name: Network Deployment Summary
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [validate-secrets, validate-network, deploy-network]
+
+    steps:
+    - name: Generate network deployment summary
+      run: |
+        echo "## 🌐 ATM Network Infrastructure Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "| Component | Status | Details |" >> $GITHUB_STEP_SUMMARY
+        echo "|-----------|--------|---------|" >> $GITHUB_STEP_SUMMARY
+
+        # Validation
+        if [ "${{ needs.validate-network.result }}" == "success" ]; then
+          echo "| 🔍 Template Validation | ✅ Success | ARM template validated |" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "| 🔍 Template Validation | ❌ Failed | Check template syntax |" >> $GITHUB_STEP_SUMMARY
+        fi
+
+        # Deployment
+        if [ "${{ needs.deploy-network.result }}" == "success" ]; then
+          echo "| 🚀 Network Deployment | ✅ Success | VNet and NSGs created |" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "| 🚀 Network Deployment | ❌ Failed | Check deployment logs |" >> $GITHUB_STEP_SUMMARY
+        fi
+
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 🏗️ Network Architecture" >> $GITHUB_STEP_SUMMARY
+        echo "- **Virtual Network**: 10.0.0.0/16 address space" >> $GITHUB_STEP_SUMMARY
+        echo "- **Frontend Subnet**: 10.0.1.0/24 (Web apps, public access)" >> $GITHUB_STEP_SUMMARY
+        echo "- **Backend Subnet**: 10.0.2.0/24 (APIs, databases, private access)" >> $GITHUB_STEP_SUMMARY
+        echo "- **Security**: NSGs with secure rules" >> $GITHUB_STEP_SUMMARY
+        echo "- **Service Endpoints**: Enabled for Azure services" >> $GITHUB_STEP_SUMMARY
+
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 🎯 Next Steps" >> $GITHUB_STEP_SUMMARY
+        echo "1. Deploy Azure Key Vault for secrets management" >> $GITHUB_STEP_SUMMARY
+        echo "2. Deploy Azure SQL Database" >> $GITHUB_STEP_SUMMARY
+        echo "3. Deploy App Service Plan and Web Apps" >> $GITHUB_STEP_SUMMARY
+        echo "4. Configure monitoring and logging" >> $GITHUB_STEP_SUMMARY

@@ -54,6 +54,10 @@
       "name": "[variables('vnetName')]",
       "location": "[variables('location')]",
       "tags": "[variables('tags')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/networkSecurityGroups', variables('frontendNsgName'))]",
+        "[resourceId('Microsoft.Network/networkSecurityGroups', variables('backendNsgName'))]"
+      ],
       "properties": {
         "addressSpace": {
           "addressPrefixes": [
